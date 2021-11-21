@@ -1,4 +1,4 @@
 serverIP.txt
 .env
-./output/*
-./datas/*
+output/*.jpg
+datas/*.csv
