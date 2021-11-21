@@ -326,7 +326,7 @@ def test_risk():
     # 计算年化收益率
     RaA = pow(1 + RcA, days/n) - 1 
     RaB = pow(1 + RcB, days/n) - 1
-    print("年化收益率", RaA, RaB, RaA2) 
+    print("年化收益率", RaA, RaB) 
     # 计算最大回撤值 
     MDA = ((data.收盘.cummax() - data.收盘)/data.收盘.cummax()).max() 
     MDB = ((bench.收盘.cummax() - bench.收盘)/bench.收盘.cummax()).max() 
@@ -385,7 +385,7 @@ def main():
     start_date = "20160101"
     end_date = "20211231"
     rf = 0.03
-    data, bk_data = get_data(code = code, start_date = start_date, end_date = end_date, adjust = "hfq")
+    data, bk_data = get_data(code = code, start_date = start_date, end_date = end_date, adjust = "hfq", refresh = False)
     cerebro.adddata(data)
     cerebro.addstrategy(MyStrategy, bprint = False)
     start_cash = 10000000
@@ -427,5 +427,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
-    # test_risk()
+    # main()
+    test_risk()
