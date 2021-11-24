@@ -319,7 +319,6 @@ class BackTest():
             self._make_report(returns = returns, bk_ret = bk_ret, rf = rf)
         
     # 回测报告
-    # @run.change_dir
     def _make_report(self, returns, bk_ret, rf, filename = "report.jpg", title = "回测结果", prepare_returns = False):
         quantstats.reports.html(returns = returns, benchmark = bk_ret, rf = rf, output='./output/stats.html', title=title, prepare_returns = prepare_returns)
         imgkit.from_file("./output/stats.html", "./output/" + filename, options = {"xvfb": ""})
@@ -362,36 +361,107 @@ class MyStrategy(Strategy):
                 
                 
 # 对整个市场的股票进行回测
-# 形成股票池
-@run.change_dir
-def make_pool(refresh = True):
-    data = pd.DataFrame()
-    path = "./datas/"
-    stockfile = path + "stocks.csv"
-    if os.path.exists(stockfile) and refresh == False:
-        data = pd.read_csv(stockfile, dtype = {"code":str, "昨日收盘":np.float64})
-    else:
-        stock_zh_a_spot_df = ak.stock_zh_a_spot()
-        stock_zh_a_spot_df.to_csv(stockfile)
-        data = stock_zh_a_spot_df
-    codes = select(data)
-    return codes
-    
-    
-# 对股票数据进行筛选
-def select(data, highprice = sys.float_info.max, lowprice = 0.0):
-    # 对股价进行筛选
-    smalldata = data[(data.最高 < highprice) & (data.最低 > lowprice)]
-    # 排除ST个股
-    smalldata = smalldata[~ smalldata.名称.str.contains("ST")]
-    # 排除要退市个股
-    smalldata = smalldata[~ smalldata.名称.str.contains("退")]
+class Research():
+    """
+        A股市场回测类
+        strategy   回测策略
+        start_date 回测开始日期
+        end_date   回测结束日期
+        highprice  筛选股票池的最高股价
+        lowprice   筛选股票池的最低股价
+        min_len    股票数据最小大小(避免新股等)
+        start_cash 初始资金大小
+        retest     是否重新回测
+        refresh    是否更新数据
+        bdraw      是否作图
+    """
+    def __init__(self, strategy, start_date, end_date, highprice = sys.float_info.max, lowprice = 0.0, min_len = 1, start_cash = 10000000, retest = False, refresh = False, bdraw = True):
+        self._strategy = strategy
+        self._start_date = start_date
+        self._end_date = end_date
+        self._highprice = highprice
+        self._lowprice = lowprice
+        self._min_len = min_len
+        self._start_cash = start_cash
+        self._retest = retest
+        self._refresh = refresh
+        self._bdraw = bdraw
+        
+    # 调用接口
+    def run(self):
+        self._test()
+        if self._bdraw:
+            self._draw(self._results)
+        return self._results
+        
+    # 对回测结果画图
+    def _draw(self, results):
+        results.set_index("股票代码", inplace = True)
+        # 绘图
+        plt.figure()
+        results.loc[:, ["SQN", "α值", "β值", "交易总次数", "信息比例", "夏普比率", "年化收益率", "收益/成本", "最大回撤", "索提比例", "胜率", "赔率"]].hist(bins = 100, figsize = (40, 20))
+        plt.suptitle("对整个市场回测结果")
+        plt.savefig("./output/market_test.jpg")
+        
+    # 执行回测    
+    def _test(self):
+        result_path = "./output/market_test.csv"
+        if os.path.exists(result_path) and self._retest == False:
+            self._results = pd.read_csv(result_path, dtype = {"股票代码":str})
+            return
+            
+        self._codes = self._make_pool(refresh = self._refresh)
+        self._results = pd.DataFrame()
+        n = len(self._codes)
+        i = 0
+        bk_data = get_data(code = "000300", 
+        start_date = self._start_date, 
+        end_date = self._end_date,
+        refresh = True)
+        print("回测整个市场……")
+        for code in self._codes:
+            i += 1
+            print("回测进度:", i/n)
+            data = get_data(code = code, 
+                start_date = self._start_date, 
+                end_date = self._end_date,
+                refresh = True)
+            if len(data) <= self._min_len:
+                continue
+            backtest = BackTest(strategy = self._strategy, code = code, start_date = self._start_date, end_date = self._end_date, stock_data = data, bk_data = bk_data, start_cash = self._start_cash, refresh = True)
+            res = backtest.run()
+            self._results = self._results.append(res, ignore_index = True)
+        self._results.to_csv(result_path)
+        return
+        
+    # 形成股票池
+    def _make_pool(self, refresh = True):
+        data = pd.DataFrame()
+        path = "./datas/"
+        stockfile = path + "stocks.csv"
+        if os.path.exists(stockfile) and refresh == False:
+            data = pd.read_csv(stockfile, dtype = {"code":str, "昨日收盘":np.float64})
+        else:
+            stock_zh_a_spot_df = ak.stock_zh_a_spot()
+            stock_zh_a_spot_df.to_csv(stockfile)
+            data = stock_zh_a_spot_df
+        codes = self._select(data)
+        return codes
+        
+    # 对股票数据进行筛选
+    def _select(self, data, highprice = sys.float_info.max, lowprice = 0.0):
+        # 对股价进行筛选
+        smalldata = data[(data.最高 < highprice) & (data.最低 > lowprice)]
+        # 排除ST个股
+        smalldata = smalldata[~ smalldata.名称.str.contains("ST")]
+        # 排除要退市个股
+        smalldata = smalldata[~ smalldata.名称.str.contains("退")]
 
-    codes = []
-    for code in smalldata.代码.values:
-        codes.append(code[2:])
+        codes = []
+        for code in smalldata.代码.values:
+            codes.append(code[2:])
     
-    return codes
+        return codes
 
        
 @run.change_dir
@@ -424,64 +494,16 @@ def main():
     results = backtest.run()
     print("回测结果", results)
     
-    
+
 # 对整个市场进行回测
 @run.change_dir
-def research(start_date, end_date, min_len = 1, retest = False):
+def do_research():
     init_display()
-    if retest == False:
-        results = pd.read_csv("./output/market_test.csv", dtype = {"股票代码":str})
-        return results
-        
-    codes = make_pool(refresh = False)
-    results = pd.DataFrame()
-    n = len(codes)
-    i = 0
-    bk_data = get_data(code = "000300", 
-        start_date = start_date, 
-        end_date = end_date,
-        refresh = True)
-    print("回测整个市场……")
-    for code in codes:
-        i += 1
-        print("回测进度:", i/n)
-        data = get_data(code = code, 
-        start_date = start_date, 
-        end_date = end_date,
-        refresh = True)
-        if len(data) <= min_len:
-            continue
-        backtest = BackTest(strategy = MyStrategy, code = code, start_date = start_date, end_date = end_date, stock_data = data, bk_data = bk_data, refresh = True)
-        res = backtest.run()
-        results = results.append(res, ignore_index = True)
-        
-    print(results.head())
-    results.to_csv("./output/market_test.csv")
-    return results
-    
-    
-# 对回测结果进行分析
-@run.change_dir
-def analyse(results):
-    results.set_index("股票代码", inplace = True)
-    # 按年化收益率排序
-    sort_results = results.sort_values(by = "年化收益率", ascending = False, inplace = False)
-    print(sort_results.info())
-    print(sort_results.head())
-    print(sort_results.年化收益率.head(10))
-    # 绘图
-    fig = plt.figure()
-    
-    sort_results.loc[:, ["SQN", "α值", "β值", "交易总次数", "信息比例", "夏普比率", "年化收益率", "收益/成本", "最大回撤", "索提比例", "胜率", "赔率"]].hist(bins = 200, figsize = (40, 20))
-    plt.suptitle("对整个市场回测结果")
-    # plt.subplot(1, 2, 2)
-    # sort_results[2:].hist(column = "α值", bins = "auto")
-    plt.savefig("./output/market_test.jpg")
-    
+    research = Research(MyStrategy, start_date = "20150101", end_date = "20210101", min_len = 100, retest = False)
+    results = research.run()
+    print(results.head(), results.describe())
 
 
 if __name__ == "__main__":
     # main()
-    results = research(start_date = "20150101", end_date = "20210101", min_len = 100, retest = False)
-    analyse(results)
-    
+    do_research()

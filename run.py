@@ -89,7 +89,7 @@ def run(gpus, user, server):
         os.system(s)
         after_run(user, server)
     elif gpus == "copy":
-        if sys.argv[1] == "up":
+        if sys.argv[2] == "up":
             before_run(user, server)
         elif sys.argv[2] == "down":
             after_run(user, server)
