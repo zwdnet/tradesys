@@ -48,7 +48,7 @@ def before_run(user, server):
     s = "ssh root@" + server +  " -p 2222 \"chown -R 1000:1000 /home/code/datas\""
     os.system(s)
     # 将本地目录所有文件上传至容器
-    s = "scp -r ./* " + user + "@" + server + ":~/code"
+    s = "scp ./* " + user + "@" + server + ":~/code"
     # print("测试3", s)
     os.system(s)
     # 更改服务器容器里的当前目录
@@ -72,9 +72,9 @@ def after_run(user, server):
     s = "scp -r " + user +"@" + server + ":~/code/output/* ./output/"
     os.system(s)
     # 将代码目录里所有数据文件传回
-    s = "scp -r " + user +"@" + server + ":~/code/datas/* ./datas/"
+    # s = "scp -r " + user +"@" + server + ":~/code/datas/* ./datas/"
     # print("测试5", s)
-    os.system(s)
+    # os.system(s)
 
 
 # 上传代码至服务器并运行

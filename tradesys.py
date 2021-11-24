@@ -26,6 +26,42 @@ def init_display():
     plt.rcParams['font.sans-serif'] = ['SimHei']
     
     
+# 获取数据
+def get_data(code, start_date = "20000101", end_date = "20201231", adjust = "qfq", period = "daily", refresh = False):
+    def download_data(code):
+        try:
+            data = ak.stock_zh_a_hist(symbol = code, start_date = start_date, end_date = end_date, adjust = adjust, period = period)
+        except KeyError:
+            if adjust == "qfq":
+                fqt = 1
+            elif adjust == "hfq":
+                fqt = 2
+            
+            if period == "daily":
+                klt = 101
+            elif period == "weekly":
+                klt = 102
+            elif period == "monthly":
+                klt = 103
+            data = ef.stock.get_quote_history(code, beg = start_date, end = end_date, fqt = fqt, klt = klt)
+        data.日期 = pd.to_datetime(data.日期)
+        data.set_index("日期", drop = False, inplace = True)
+        return data
+            
+    stockfile = "./datas/"+code+".csv"
+    if os.path.exists(stockfile) and refresh == False:
+        stock_data = pd.read_csv(stockfile)
+        stock_data.日期 = pd.to_datetime(stock_data.日期)
+        stock_data.set_index("日期", drop = False, inplace = True)
+    else:
+        stock_data = download_data(code)
+        if os.path.exists(stockfile):
+            os.system("rm " + stockfile)
+        stock_data.to_csv(stockfile)
+    
+    return stock_data
+    
+    
 # A股的交易成本:买入交佣金，卖出交佣金和印花税
 class CNA_Commission(bt.CommInfoBase):
     params = (('stamp_duty', 0.005), # 印花税率 
@@ -98,6 +134,8 @@ class BackTest():
         code       回测股票代码
         start_date 回测开始日期
         end_date   回测结束日期
+        stock_data 股票数据
+        bk_data    基准数据
         rf         无风险收益率
         start_cash 初始资金
         stamp_duty 印花税率，单向征收
@@ -108,13 +146,14 @@ class BackTest():
         bprint     是否输出中间结果
         bdraw      是否作图
     """
-    def __init__(self, strategy, code, start_date, end_date, bk_code = "000300", rf = 0.03, start_cash = 10000000, stamp_duty=0.005, commission=0.0001, adjust = "hfq", period = "daily", refresh = False, bprint = False, bdraw = False):
+    def __init__(self, strategy, code, start_date, end_date, stock_data, bk_data, rf = 0.03, start_cash = 10000000, stamp_duty=0.005, commission=0.0001, adjust = "hfq", period = "daily", refresh = False, bprint = False, bdraw = False):
         self._cerebro = bt.Cerebro()
         self._strategy = strategy
         self._code = code
-        self._bk_code = bk_code
         self._start_date = start_date
         self._end_date = end_date
+        self._stock_data = stock_data
+        self._bk_data = bk_data
         self._rf = rf
         self._start_cash = start_cash
         self._comminfo = CNA_Commission(stamp_duty=0.005, commission=0.0001)
@@ -126,54 +165,15 @@ class BackTest():
         
     # 回测前准备
     def _before_test(self):
-        self._data, self._bk_data = self._get_data(code = self._code, bk_code = self._bk_code, start_date = self._start_date, end_date = self._end_date, adjust = self._adjust, period = self._period, refresh = self._refresh)
+        self._data = self._datatransform(self._stock_data, self._code)
         self._cerebro.adddata(self._data)
         self._cerebro.addstrategy(self._strategy, bprint = self._bprint)
     
         self._cerebro.broker.setcash(self._start_cash)
         self._cerebro.broker.addcommissioninfo(self._comminfo)
         
-    # 获取数据
-    def _get_data(self, code, bk_code = "000300", start_date = "20000101", end_date = "20201231", adjust = "qfq", period = "daily", refresh = False):
-        def download_data(code):
-            try:
-                data = ak.stock_zh_a_hist(symbol = code, start_date = start_date, end_date = end_date, adjust = adjust, period = period)
-            except KeyError:
-                if adjust == "qfq":
-                    fqt = 1
-                elif adjust == "hfq":
-                    fqt = 2
-            
-                if period == "daily":
-                    klt = 101
-                elif period == "weekly":
-                    klt = 102
-                elif period == "monthly":
-                    klt = 103
-                data = ef.stock.get_quote_history(code, beg = start_date, end = end_date, fqt = fqt, klt = klt)
-            data.日期 = pd.to_datetime(data.日期)
-            data.set_index("日期", drop = False, inplace = True)
-            return data
-            
-        stockfile = "./datas/"+code+".csv"
-        bkfile = "./datas/"+bk_code+".csv"
-        if os.path.exists(stockfile) and refresh == False:
-            stock_data = pd.read_csv(stockfile)
-            stock_data.日期 = pd.to_datetime(stock_data.日期)
-            stock_data.set_index("日期", drop = False, inplace = True)
-        else:
-            stock_data = download_data(code)
-            stock_data.to_csv(stockfile)
-    
-        # 获取基准数据
-        if os.path.exists(bkfile) and refresh == False:
-            bk_data = pd.read_csv(bkfile)
-            bk_data.日期 = pd.to_datetime(bk_data.日期)
-            bk_data.set_index("日期", drop = False, inplace = True)
-        else:
-            bk_data = download_data(bk_code)
-            bk_data.to_csv(bkfile)
-    
+    # 数据转换
+    def _datatransform(self, stock_data, code):
         # 生成datafeed
         data = bt.feeds.PandasData(
             dataname=stock_data,
@@ -188,7 +188,7 @@ class BackTest():
             volume='成交量',
             openinterest=-1
             )
-        return (data, bk_data)
+        return data
     
     # 增加分析器
     def _add_analyzer(self):
@@ -230,6 +230,7 @@ class BackTest():
         testresults["期末净值"] = end_value
         testresults["净收益"] = pnl
         testresults["收益/成本"] = pnl/testresults["交易成本"]
+        testresults["股票代码"] = self._code
         return testresults
         
     # 计算回测指标
@@ -246,7 +247,8 @@ class BackTest():
         sharpeA = results[0].analyzers.SharpeRatio_A.get_analysis()
         cost = results[0].analyzers.Cost.get_analysis()
         backtest_results = pd.Series()
-
+        
+        # print("测试", totalTrade)
         backtest_results["总收益率"] = Returns["rtot"]
         backtest_results["平均收益率"] = Returns["ravg"]
         backtest_results["年化收益率"] = Returns["rnorm"]
@@ -349,35 +351,137 @@ class MyStrategy(Strategy):
         if not self.position:
             cash = self.broker.getcash()
             price = self.data_close[0]
+            if price <= 0.0:
+                return
             stake = math.ceil((0.95*cash/price)/100)*100
             if self.data_close[0] > self.sma[0]:
                 self.order = self.buy(size = stake)
         else:
             if self.data_close[0] < self.sma[0]:
                 self.order = self.close()
+                
+                
+# 对整个市场的股票进行回测
+# 形成股票池
+@run.change_dir
+def make_pool(refresh = True):
+    data = pd.DataFrame()
+    path = "./datas/"
+    stockfile = path + "stocks.csv"
+    if os.path.exists(stockfile) and refresh == False:
+        data = pd.read_csv(stockfile, dtype = {"code":str, "昨日收盘":np.float64})
+    else:
+        stock_zh_a_spot_df = ak.stock_zh_a_spot()
+        stock_zh_a_spot_df.to_csv(stockfile)
+        data = stock_zh_a_spot_df
+    codes = select(data)
+    return codes
+    
+    
+# 对股票数据进行筛选
+def select(data, highprice = sys.float_info.max, lowprice = 0.0):
+    # 对股价进行筛选
+    smalldata = data[(data.最高 < highprice) & (data.最低 > lowprice)]
+    # 排除ST个股
+    smalldata = smalldata[~ smalldata.名称.str.contains("ST")]
+    # 排除要退市个股
+    smalldata = smalldata[~ smalldata.名称.str.contains("退")]
+
+    codes = []
+    for code in smalldata.代码.values:
+        codes.append(code[2:])
+    
+    return codes
 
        
 @run.change_dir
 def main():
     init_display()
+    data = get_data(code = "513100", 
+        start_date = "20160101", 
+        end_date = "20211231",
+        refresh = True)
+    bk_data = get_data(code = "000300", 
+        start_date = "20160101", 
+        end_date = "20211231",
+        refresh = True)
     backtest = BackTest(
         strategy = MyStrategy, 
         code = "513100", 
         start_date = "20160101", 
         end_date = "20211231", 
+        stock_data = data, 
+        bk_data = bk_data,
         rf = 0.03, 
         start_cash = 10000000,
         stamp_duty=0.005, 
         commission=0.0001, 
         adjust = "hfq", 
         period = "daily", 
-        refresh = False, 
+        refresh = True, 
         bprint = False, 
         bdraw = True)
     results = backtest.run()
     print("回测结果", results)
+    
+    
+# 对整个市场进行回测
+@run.change_dir
+def research(start_date, end_date, min_len = 1, retest = False):
+    init_display()
+    if retest == False:
+        results = pd.read_csv("./output/market_test.csv", dtype = {"股票代码":str})
+        return results
+        
+    codes = make_pool(refresh = False)
+    results = pd.DataFrame()
+    n = len(codes)
+    i = 0
+    bk_data = get_data(code = "000300", 
+        start_date = start_date, 
+        end_date = end_date,
+        refresh = True)
+    print("回测整个市场……")
+    for code in codes:
+        i += 1
+        print("回测进度:", i/n)
+        data = get_data(code = code, 
+        start_date = start_date, 
+        end_date = end_date,
+        refresh = True)
+        if len(data) <= min_len:
+            continue
+        backtest = BackTest(strategy = MyStrategy, code = code, start_date = start_date, end_date = end_date, stock_data = data, bk_data = bk_data, refresh = True)
+        res = backtest.run()
+        results = results.append(res, ignore_index = True)
+        
+    print(results.head())
+    results.to_csv("./output/market_test.csv")
+    return results
+    
+    
+# 对回测结果进行分析
+@run.change_dir
+def analyse(results):
+    results.set_index("股票代码", inplace = True)
+    # 按年化收益率排序
+    sort_results = results.sort_values(by = "年化收益率", ascending = False, inplace = False)
+    print(sort_results.info())
+    print(sort_results.head())
+    print(sort_results.年化收益率.head(10))
+    # 绘图
+    fig = plt.figure()
+    
+    sort_results.loc[:, ["SQN", "α值", "β值", "交易总次数", "信息比例", "夏普比率", "年化收益率", "收益/成本", "最大回撤", "索提比例", "胜率", "赔率"]].hist(bins = 200, figsize = (40, 20))
+    plt.suptitle("对整个市场回测结果")
+    # plt.subplot(1, 2, 2)
+    # sort_results[2:].hist(column = "α值", bins = "auto")
+    plt.savefig("./output/market_test.jpg")
+    
 
 
 if __name__ == "__main__":
-    main()
+    # main()
+    results = research(start_date = "20150101", end_date = "20210101", min_len = 100, retest = False)
+    analyse(results)
     
