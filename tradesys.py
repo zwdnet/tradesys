@@ -16,6 +16,9 @@ import imgkit
 from PIL import Image
 from scipy import stats
 import empyrical as ey
+import itertools 
+import collections
+
 
 
 
@@ -510,6 +513,109 @@ def do_research():
     
     
 # 对策略进行参数优化
+class OptStrategy():
+    """
+        策略优化类
+        code       股票代码
+        bk_code    基准股票代码
+        strategy   回测策略
+        start_date 回测开始日期
+        end_date   回测结束日期
+        highprice  筛选股票池的最高股价
+        lowprice   筛选股票池的最低股价
+        min_len    股票数据最小大小(避免新股等)
+        start_cash 初始资金大小
+        retest     是否重新回测
+        refresh    是否更新数据
+        bprint     是否输出交易过程
+        bdraw      是否作图
+        **params   要调优的参数范围
+    """
+    def __init__(self, code, bk_code, strategy, start_date, end_date, min_len = 1, start_cash = 10000000, retest = False, refresh = False, bprint = False, bdraw = True, **params):
+        self._code = code
+        self._bk_code = bk_code
+        self._strategy = strategy
+        self._start_date = start_date
+        self._end_date = end_date
+        self._min_len = min_len
+        self._start_cash = start_cash
+        self._retest = retest
+        self._refresh = refresh
+        self._bprint = bprint
+        self._bdraw = bdraw
+        self._params = params
+        
+    def _before_test(self):
+        self._data = get_data(code = self._code, start_date = self._start_date, end_date = self._end_date, refresh = self._refresh)
+        self._bk_data = get_data(code = self._bk_code, start_date = self._start_date, end_date = self._end_date, refresh = self._refresh)
+                
+    # 运行回测
+    def run(self):
+        self._before_test()
+        self._results = pd.DataFrame()
+        optparams = []
+        # 遍历所有参数，初始化回测类，执行回测
+        params = self._get_params()
+        for param in params:
+            backtest = BackTest(
+                strategy = self._strategy, 
+                code = self._code, 
+                start_date = self._start_date, 
+                end_date = self._end_date, 
+                stock_data = self._data, 
+                bk_data = self._bk_data,
+                start_cash = self._start_cash,
+                refresh = self._refresh, 
+                bprint = self._bprint, 
+                bdraw = self._bdraw,
+                **param[0])
+            res = backtest.run()
+            self._results = self._results.append(res, ignore_index = True)
+            optparams.append(param[0])
+        self._results["参数"] = optparams
+        self._draw(self._results)
+        return self._results        
+                    
+    # 工具函数，提取参数要用，照Backtrader的optstrategy写的。
+    @staticmethod
+    def _iterize(iterable): 
+        niterable = list() 
+        for elem in iterable: 
+            if isinstance(elem, str): 
+                elem = (elem,) 
+            elif not isinstance(elem, collections.Iterable): 
+                elem = (elem,)
+            niterable.append(elem) 
+        return niterable
+                    
+    # 分析参数列表，提取参数
+    def _get_params(self):
+        params = self._params
+        optkeys = list(params)
+        vals = self._iterize(params.values())
+        optvals = itertools.product(*vals)
+        okwargs1 = map(zip, itertools.repeat(optkeys), optvals)
+        optkwargs = map(dict, okwargs1) 
+        it = itertools.product(optkwargs)
+        return it
+        
+    # 对回测结果进行排序
+    def sort_results(self, results, key, inplace = True, ascending = False):
+        print(results)
+        results.sort_values(by = key, inplace = inplace, ascending = ascending)
+        print("测试", results)
+        return results
+        
+    # 对回测结果画图
+    def _draw(self, results):
+        results.set_index("股票代码", inplace = True)
+        # 绘图
+        plt.figure()
+        results.loc[:, ["SQN", "α值", "β值", "交易总次数", "信息比例", "夏普比率", "年化收益率", "收益/成本", "最大回撤", "索提比例", "胜率", "赔率"]].hist(bins = 100, figsize = (40, 20))
+        plt.suptitle("策略参数优化结果")
+        plt.savefig("./output/params_optimize.jpg")
+
+
 @run.change_dir
 def optimize():
     init_display()
@@ -525,6 +631,7 @@ def optimize():
     opt_results = pd.DataFrame()
     params = []
     for i in map:
+        param = {'maperiod': i, 'test': 2}
         backtest = BackTest(
                 strategy = MyStrategy, 
                 code = "513100", 
@@ -541,7 +648,7 @@ def optimize():
                 refresh = False, 
                 bprint = False, 
                 bdraw = False,
-                maperiod = i)
+                **param)
         results = backtest.run()
         opt_results = opt_results.append(results, ignore_index = True)
         params.append(i)
@@ -549,10 +656,74 @@ def optimize():
     # 按年化收益率排序
     opt_results.sort_values(by = "年化收益率", inplace = True, ascending = False)
     print(opt_results.loc[:, ["参数", "年化收益率"]])
+    
+    
+# 实验多参数调参
+def testA(strategy, *keys, **params):
+    print(keys, params)
+    """
+    print(params, len(params))
+    param_list = dict()
+    for keys, values in params.items():
+        for key in keys:
+            for value in values:
+                print(key, value)
+    
+                param_list[key].append((key, value))
+    print(param_list)
+    """
+    def iterize(iterable): 
+        niterable = list() 
+        for elem in iterable: 
+            if isinstance(elem, str): 
+                elem = (elem,) 
+            elif not isinstance(elem, collections.Iterable): 
+                elem = (elem,)
+            niterable.append(elem) 
+        return niterable 
 
+    optkeys = list(params)
+    vals = iterize(params.values())
+    optvals = itertools.product(*vals)
+    okwargs1 = map(zip, itertools.repeat(optkeys), optvals)
+    optkwargs = map(dict, okwargs1) 
+    it = itertools.product(optkwargs)
+    for i in it:
+        print(i[0], type(i[0]))
+        stra(i[0])
+        # for k, v in i.items():
+        #    print(k, v)
+            
+            
+def stra(**kwargs):
+    print("hello", kwargs)
+    
+
+# 进行调参
+@run.change_dir    
+def do_opt():
+    init_display()
+    map = range(2, 20)
+    opt = OptStrategy(
+        code = "513100", 
+        bk_code = "000300", 
+        strategy = MyStrategy, 
+        start_date = "20160101", 
+        end_date = "20211231", 
+        start_cash = 10000000, 
+        retest = False, 
+        refresh = False, 
+        bprint = False,
+        bdraw = False, 
+        maperiod = range(10, 20))
+    results = opt.run()
+    results = opt.sort_results(results, key = "年化收益率")
+    print(results.loc[:, ["参数", "年化收益率"]])
+    
 
 if __name__ == "__main__":
     # main()
     # do_research()
-    optimize()
-    # testA(a = 2, b = 5.6)
+    # optimize()
+    # testA(stra, a = range(1, 5), b = range(2, 10), c = range(10, 15))
+    do_opt()
