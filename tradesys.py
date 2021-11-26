@@ -1,4 +1,4 @@
-# AkShare上的例子
+# 交易系统，封装回测、优化基本过程
 
 
 import backtrader as bt
@@ -145,8 +145,9 @@ class BackTest():
         refresh    是否更新数据
         bprint     是否输出中间结果
         bdraw      是否作图
+        **param   策略参数，用于调参
     """
-    def __init__(self, strategy, code, start_date, end_date, stock_data, bk_data, rf = 0.03, start_cash = 10000000, stamp_duty=0.005, commission=0.0001, adjust = "hfq", period = "daily", refresh = False, bprint = False, bdraw = False):
+    def __init__(self, strategy, code, start_date, end_date, stock_data, bk_data, rf = 0.03, start_cash = 10000000, stamp_duty=0.005, commission=0.0001, adjust = "hfq", period = "daily", refresh = False, bprint = False, bdraw = False, **param):
         self._cerebro = bt.Cerebro()
         self._strategy = strategy
         self._code = code
@@ -162,12 +163,16 @@ class BackTest():
         self._refresh = refresh
         self._bprint = bprint
         self._bdraw = bdraw
+        self._param = param
         
     # 回测前准备
     def _before_test(self):
         self._data = self._datatransform(self._stock_data, self._code)
         self._cerebro.adddata(self._data)
-        self._cerebro.addstrategy(self._strategy, bprint = self._bprint)
+        self._cerebro.addstrategy(self._strategy, bprint = self._bprint, **self._param)
+        # print("测试", self._param, self._param.keys(), self._param.values(), self._param.items(), **self._param)
+        # for k, v in self._param.items():
+        #    print(k, v)
     
         self._cerebro.broker.setcash(self._start_cash)
         self._cerebro.broker.addcommissioninfo(self._comminfo)
@@ -502,8 +507,52 @@ def do_research():
     research = Research(MyStrategy, start_date = "20150101", end_date = "20210101", min_len = 100, retest = False)
     results = research.run()
     print(results.head(), results.describe())
+    
+    
+# 对策略进行参数优化
+@run.change_dir
+def optimize():
+    init_display()
+    data = get_data(code = "513100", 
+        start_date = "20160101", 
+        end_date = "20211231",
+        refresh = True)
+    bk_data = get_data(code = "000300", 
+        start_date = "20160101", 
+        end_date = "20211231",
+        refresh = True)
+    map = range(2, 20)
+    opt_results = pd.DataFrame()
+    params = []
+    for i in map:
+        backtest = BackTest(
+                strategy = MyStrategy, 
+                code = "513100", 
+                start_date = "20160101", 
+                end_date = "20211231", 
+                stock_data = data, 
+                bk_data = bk_data,
+                rf = 0.03, 
+                start_cash = 10000000,
+                stamp_duty=0.005, 
+                commission=0.0001, 
+                adjust = "hfq", 
+                period = "daily", 
+                refresh = False, 
+                bprint = False, 
+                bdraw = False,
+                maperiod = i)
+        results = backtest.run()
+        opt_results = opt_results.append(results, ignore_index = True)
+        params.append(i)
+    opt_results["参数"] = params
+    # 按年化收益率排序
+    opt_results.sort_values(by = "年化收益率", inplace = True, ascending = False)
+    print(opt_results.loc[:, ["参数", "年化收益率"]])
 
 
 if __name__ == "__main__":
     # main()
-    do_research()
+    # do_research()
+    optimize()
+    # testA(a = 2, b = 5.6)
