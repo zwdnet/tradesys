@@ -98,7 +98,7 @@ class CostAnalyzer(bt.Analyzer):
         return self.ret
 
     
-# 均线策略
+# 策略类基类
 class Strategy(bt.Strategy):
     def __init__(self):
         pass
@@ -173,10 +173,6 @@ class BackTest():
         self._data = self._datatransform(self._stock_data, self._code)
         self._cerebro.adddata(self._data)
         self._cerebro.addstrategy(self._strategy, bprint = self._bprint, **self._param)
-        # print("测试", self._param, self._param.keys(), self._param.values(), self._param.items(), **self._param)
-        # for k, v in self._param.items():
-        #    print(k, v)
-    
         self._cerebro.broker.setcash(self._start_cash)
         self._cerebro.broker.addcommissioninfo(self._comminfo)
         
@@ -215,6 +211,7 @@ class BackTest():
         self._before_test()
         self._add_analyzer()
         self._results = self._cerebro.run()
+        
         return self._get_results()
         
     # 获取回测结果
@@ -222,7 +219,6 @@ class BackTest():
         # 计算基准策略收益率
         bk_ret = self._bk_data.收盘.pct_change()
         bk_ret.fillna(0.0, inplace = True)
-        # print(bk_ret)
     
         if self._bdraw:
             self._cerebro.plot(style = "candlestick")
@@ -255,8 +251,7 @@ class BackTest():
         sharpeA = results[0].analyzers.SharpeRatio_A.get_analysis()
         cost = results[0].analyzers.Cost.get_analysis()
         backtest_results = pd.Series()
-        
-        # print("测试", totalTrade)
+
         backtest_results["总收益率"] = Returns["rtot"]
         backtest_results["平均收益率"] = Returns["ravg"]
         backtest_results["年化收益率"] = Returns["rnorm"]
@@ -272,9 +267,17 @@ class BackTest():
         backtest_results["亏损交易最大亏损"] = totalTrade["lost"]["pnl"]["max"]
         backtest_results["SQN"] = sqn
         # 胜率就是成功率，例如投入十次，七次盈利，三次亏损，胜率就是70%。
-        backtest_results["胜率"] = totalTrade["won"]["total"]/totalTrade["total"]["total"]
+        # 防止被零除
+        if totalTrade["total"]["total"] == 0:
+            backtest_results["胜率"] = np.NaN
+        else:
+            backtest_results["胜率"] = totalTrade["won"]["total"]/totalTrade["total"]["total"]
         # 赔率是指盈亏比，例如平均每次盈利30%，平均每次亏损10%，盈亏比就是3倍。
-        backtest_results["赔率"] = totalTrade["won"]["pnl"]["average"]/abs(totalTrade["lost"]["pnl"]["average"])
+        # 防止被零除
+        if totalTrade["lost"]["pnl"]["average"] == 0:
+            backtest_results["赔率"] = np.NaN
+        else:
+            backtest_results["赔率"] = totalTrade["won"]["pnl"]["average"]/abs(totalTrade["lost"]["pnl"]["average"])
     
         # 计算风险指标
         self._risk_analyze(backtest_results, returns, bk_ret, rf = rf)
@@ -303,11 +306,9 @@ class BackTest():
         calmar = quantstats.stats.calmar(returns = returns, prepare_returns = prepare_returns)
         # r2值
         r2 = quantstats.stats.r_squared(returns, bk_ret, prepare_returns = prepare_returns)
-    
         backtest_results["波动率"] = quantstats.stats.volatility(returns = returns, prepare_returns = prepare_returns)
         backtest_results["赢钱概率"] = quantstats.stats.win_rate(returns = returns, prepare_returns = prepare_returns)
         backtest_results["收益风险比"] = quantstats.stats.risk_return_ratio(returns = returns, prepare_returns = prepare_returns)
-    
         backtest_results["夏普比率"] = sharpe
         backtest_results["α值"] = alphabeta.alpha
         backtest_results["β值"] = alphabeta.beta
@@ -328,6 +329,7 @@ class BackTest():
         
     # 回测报告
     def _make_report(self, returns, bk_ret, rf, filename = "report.jpg", title = "回测结果", prepare_returns = False):
+        filename = self._code + filename 
         quantstats.reports.html(returns = returns, benchmark = bk_ret, rf = rf, output='./output/stats.html', title=title, prepare_returns = prepare_returns)
         imgkit.from_file("./output/stats.html", "./output/" + filename, options = {"xvfb": ""})
         # 压缩图片文件
@@ -335,38 +337,6 @@ class BackTest():
         im.save("./output/" + filename)
         os.system("rm ./output/stats.html") 
 
-
-# 实际的策略类
-class MyStrategy(Strategy):
-    params = (("maperiod", 15),
-              ("bprint", False),)
-    
-    def __init__(self):
-        super(MyStrategy, self).__init__()
-        self.data_close = self.datas[0].close
-        self.order = None
-        self.buy_price = None
-        self.buy_comm = None
-        self.bbuy = False
-        # 移动均线指标
-        self.sma = bt.indicators.SimpleMovingAverage(self.datas[0], period = self.params.maperiod)
-        
-    def next(self):
-        if self.order:
-            return
-            
-        if not self.position:
-            cash = self.broker.getcash()
-            price = self.data_close[0]
-            if price <= 0.0:
-                return
-            stake = math.ceil((0.95*cash/price)/100)*100
-            if self.data_close[0] > self.sma[0]:
-                self.order = self.buy(size = stake)
-        else:
-            if self.data_close[0] < self.sma[0]:
-                self.order = self.close()
-                
                 
 # 对整个市场的股票进行回测
 class Research():
@@ -382,8 +352,9 @@ class Research():
         retest     是否重新回测
         refresh    是否更新数据
         bdraw      是否作图
+        **params   策略参数
     """
-    def __init__(self, strategy, start_date, end_date, highprice = sys.float_info.max, lowprice = 0.0, min_len = 1, start_cash = 10000000, retest = False, refresh = False, bdraw = True):
+    def __init__(self, strategy, start_date, end_date, highprice = sys.float_info.max, lowprice = 0.0, min_len = 1, start_cash = 10000000, retest = False, refresh = False, bdraw = True, **params):
         self._strategy = strategy
         self._start_date = start_date
         self._end_date = end_date
@@ -394,6 +365,7 @@ class Research():
         self._retest = retest
         self._refresh = refresh
         self._bdraw = bdraw
+        self._params = params
         
     # 调用接口
     def run(self):
@@ -436,7 +408,7 @@ class Research():
                 refresh = True)
             if len(data) <= self._min_len:
                 continue
-            backtest = BackTest(strategy = self._strategy, code = code, start_date = self._start_date, end_date = self._end_date, stock_data = data, bk_data = bk_data, start_cash = self._start_cash, refresh = True)
+            backtest = BackTest(strategy = self._strategy, code = code, start_date = self._start_date, end_date = self._end_date, stock_data = data, bk_data = bk_data, start_cash = self._start_cash, refresh = True, **self._params)
             res = backtest.run()
             self._results = self._results.append(res, ignore_index = True)
         self._results.to_csv(result_path)
@@ -470,46 +442,6 @@ class Research():
             codes.append(code[2:])
     
         return codes
-
-       
-@run.change_dir
-def main():
-    init_display()
-    data = get_data(code = "513100", 
-        start_date = "20160101", 
-        end_date = "20211231",
-        refresh = True)
-    bk_data = get_data(code = "000300", 
-        start_date = "20160101", 
-        end_date = "20211231",
-        refresh = True)
-    backtest = BackTest(
-        strategy = MyStrategy, 
-        code = "513100", 
-        start_date = "20160101", 
-        end_date = "20211231", 
-        stock_data = data, 
-        bk_data = bk_data,
-        rf = 0.03, 
-        start_cash = 10000000,
-        stamp_duty=0.005, 
-        commission=0.0001, 
-        adjust = "hfq", 
-        period = "daily", 
-        refresh = True, 
-        bprint = False, 
-        bdraw = True)
-    results = backtest.run()
-    print("回测结果", results)
-    
-
-# 对整个市场进行回测
-@run.change_dir
-def do_research():
-    init_display()
-    research = Research(MyStrategy, start_date = "20150101", end_date = "20210101", min_len = 100, retest = False)
-    results = research.run()
-    print(results.head(), results.describe())
     
     
 # 对策略进行参数优化
@@ -614,116 +546,7 @@ class OptStrategy():
         results.loc[:, ["SQN", "α值", "β值", "交易总次数", "信息比例", "夏普比率", "年化收益率", "收益/成本", "最大回撤", "索提比例", "胜率", "赔率"]].hist(bins = 100, figsize = (40, 20))
         plt.suptitle("策略参数优化结果")
         plt.savefig("./output/params_optimize.jpg")
-
-
-@run.change_dir
-def optimize():
-    init_display()
-    data = get_data(code = "513100", 
-        start_date = "20160101", 
-        end_date = "20211231",
-        refresh = True)
-    bk_data = get_data(code = "000300", 
-        start_date = "20160101", 
-        end_date = "20211231",
-        refresh = True)
-    map = range(2, 20)
-    opt_results = pd.DataFrame()
-    params = []
-    for i in map:
-        param = {'maperiod': i, 'test': 2}
-        backtest = BackTest(
-                strategy = MyStrategy, 
-                code = "513100", 
-                start_date = "20160101", 
-                end_date = "20211231", 
-                stock_data = data, 
-                bk_data = bk_data,
-                rf = 0.03, 
-                start_cash = 10000000,
-                stamp_duty=0.005, 
-                commission=0.0001, 
-                adjust = "hfq", 
-                period = "daily", 
-                refresh = False, 
-                bprint = False, 
-                bdraw = False,
-                **param)
-        results = backtest.run()
-        opt_results = opt_results.append(results, ignore_index = True)
-        params.append(i)
-    opt_results["参数"] = params
-    # 按年化收益率排序
-    opt_results.sort_values(by = "年化收益率", inplace = True, ascending = False)
-    print(opt_results.loc[:, ["参数", "年化收益率"]])
-    
-    
-# 实验多参数调参
-def testA(strategy, *keys, **params):
-    print(keys, params)
-    """
-    print(params, len(params))
-    param_list = dict()
-    for keys, values in params.items():
-        for key in keys:
-            for value in values:
-                print(key, value)
-    
-                param_list[key].append((key, value))
-    print(param_list)
-    """
-    def iterize(iterable): 
-        niterable = list() 
-        for elem in iterable: 
-            if isinstance(elem, str): 
-                elem = (elem,) 
-            elif not isinstance(elem, collections.Iterable): 
-                elem = (elem,)
-            niterable.append(elem) 
-        return niterable 
-
-    optkeys = list(params)
-    vals = iterize(params.values())
-    optvals = itertools.product(*vals)
-    okwargs1 = map(zip, itertools.repeat(optkeys), optvals)
-    optkwargs = map(dict, okwargs1) 
-    it = itertools.product(optkwargs)
-    for i in it:
-        print(i[0], type(i[0]))
-        stra(i[0])
-        # for k, v in i.items():
-        #    print(k, v)
             
-            
-def stra(**kwargs):
-    print("hello", kwargs)
-    
-
-# 进行调参
-@run.change_dir    
-def do_opt():
-    init_display()
-    map = range(2, 20)
-    opt = OptStrategy(
-        code = "513100", 
-        bk_code = "000300", 
-        strategy = MyStrategy, 
-        start_date = "20160101", 
-        end_date = "20211231", 
-        start_cash = 10000000, 
-        retest = False, 
-        refresh = False, 
-        bprint = False,
-        bdraw = False, 
-        maperiod = range(10, 20))
-    results = opt.run()
-    results = opt.sort_results(results, key = "年化收益率")
-    print(results.loc[:, ["参数", "年化收益率"]])
-    
 
 if __name__ == "__main__":
-    # main()
-    # do_research()
-    # optimize()
-    # testA(stra, a = range(1, 5), b = range(2, 10), c = range(10, 15))
-    do_opt()
+    pass
