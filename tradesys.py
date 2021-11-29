@@ -128,7 +128,8 @@ class Strategy(bt.Strategy):
         for i, d in enumerate(self.datas):
             pos = self.getposition(d).size
             if pos != 0:
-                self.close()
+                print("关闭", d._name)
+                self.close(data = d)
             
             
 # 回测类
@@ -257,12 +258,14 @@ class BackTest():
         sharpe = results[0].analyzers.SharpeRatio.get_analysis()
         sharpeA = results[0].analyzers.SharpeRatio_A.get_analysis()
         cost = results[0].analyzers.Cost.get_analysis()
+        
         backtest_results = pd.Series()
 
         backtest_results["总收益率"] = Returns["rtot"]
         backtest_results["平均收益率"] = Returns["ravg"]
         backtest_results["年化收益率"] = Returns["rnorm"]
         backtest_results["交易成本"] = cost
+        backtest_results["SQN"] = sqn
         backtest_results["交易总次数"] = totalTrade["total"]["total"]
         backtest_results["盈利交易次数"] = totalTrade["won"]["total"]
         backtest_results["盈利交易总盈利"] = totalTrade["won"]["pnl"]["total"]
@@ -272,11 +275,11 @@ class BackTest():
         backtest_results["亏损交易总亏损"] = totalTrade["lost"]["pnl"]["total"]
         backtest_results["亏损交易平均亏损"] = totalTrade["lost"]["pnl"]["average"]
         backtest_results["亏损交易最大亏损"] = totalTrade["lost"]["pnl"]["max"]
-        backtest_results["SQN"] = sqn
+        
         # 胜率就是成功率，例如投入十次，七次盈利，三次亏损，胜率就是70%。
-        # 防止被零除
-        if totalTrade["total"]["total"] == 0:
-            backtest_results["胜率"] = np.NaN
+        # 防止被零除 
+        if totalTrade["total"]["total"] == 0: 
+            backtest_results["胜率"] = np.NaN 
         else:
             backtest_results["胜率"] = totalTrade["won"]["total"]/totalTrade["total"]["total"]
         # 赔率是指盈亏比，例如平均每次盈利30%，平均每次亏损10%，盈亏比就是3倍。

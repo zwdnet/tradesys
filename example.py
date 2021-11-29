@@ -54,6 +54,40 @@ class MyStrategy(ts.Strategy):
             if self.data_close[0][0] < self.sma[0][0]:
                 self.order = self.close()
                 """
+                
+                
+# 买入持有的策略类，测试能否正常关闭交易
+class HoldStrategy(ts.Strategy):
+    params = (("maperiod", 15),
+              ("bprint", False),)
+    
+    def __init__(self):
+        super(HoldStrategy, self).__init__()
+        self.n = len(self.datas)
+        
+    def downcast(self, amount, lot): 
+        return abs(amount//lot*lot)
+        
+    def next(self):
+        for i, d in enumerate(self.datas):
+            pos = self.getposition(d).size
+            cash = self.broker.get_cash()/self.n
+            amount = self.downcast(cash*0.99/d.close[0], 100)
+            
+            if not pos:
+                self.buy(data = d, size = amount)
+            else:
+                if self.is_lastday(data = d):
+                    self.close(data = d)
+                
+    def is_lastday(self,data): 
+        try: 
+            next_next_close = data.close[2]
+        except IndexError: 
+            return True 
+        except: 
+            print("发生其它错误")
+            return False
 
 
 # 对单只股票进行回测
@@ -61,7 +95,7 @@ class MyStrategy(ts.Strategy):
 def back_test():
     ts.init_display()
     backtest = ts.BackTest(
-        strategy = MyStrategy, 
+        strategy = HoldStrategy, 
         codes = ["513100"], 
         bk_code = "000300",
         start_date = "20160101", 
