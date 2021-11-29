@@ -5,6 +5,7 @@ import tradesys as ts
 import backtrader as bt
 import run
 import math
+import pandas as pd
 
 
 # 实际的策略类
@@ -14,50 +15,57 @@ class MyStrategy(ts.Strategy):
     
     def __init__(self):
         super(MyStrategy, self).__init__()
-        self.data_close = self.datas[0].close
+        self.sma = dict()
+        for i, d in enumerate(self.datas):
+             self.sma[d] = bt.indicators.SimpleMovingAverage(d.close, period=self.params.maperiod)
+        self.n = len(self.datas)
         self.order = None
-        self.buy_price = None
-        self.buy_comm = None
-        self.bbuy = False
-        # 移动均线指标
-        self.sma = bt.indicators.SimpleMovingAverage(self.datas[0], period = self.params.maperiod)
+        
+    def downcast(self, amount, lot): 
+        return abs(amount//lot*lot)
         
     def next(self):
         if self.order:
             return
             
+        for i, d in enumerate(self.datas):
+            pos = self.getposition(d).size
+            cash = self.broker.get_cash()/self.n
+            amount = self.downcast(cash*0.95/d.close[0], 100)
+
+            if not pos:
+                if d.close[0] > self.sma[d][0]:
+                    self.buy(data = d, size = amount)
+                    # self.order = self.order_target_percent(d, 40, name=d._name)
+            else:
+                if d.close[0] < self.sma[d][0]:
+                    self.order = self.order_target_percent(d, 0, name=d._name)
+                            
+        """
         if not self.position:
             cash = self.broker.getcash()
-            price = self.data_close[0]
+            price = self.datas[0].close[0]
             if price <= 0.0:
                 return
-            stake = math.ceil((0.95*cash/price)/100)*100
-            if self.data_close[0] > self.sma[0]:
+            stake = math.ceil(((0.95*cash/price)/self.n)/100)*100
+            if self.datas[0].close[0] > self.sma[0][0]:
                 self.order = self.buy(size = stake)
         else:
-            if self.data_close[0] < self.sma[0]:
+            if self.data_close[0][0] < self.sma[0][0]:
                 self.order = self.close()
+                """
 
 
 # 对单只股票进行回测
 @run.change_dir
 def back_test():
     ts.init_display()
-    data = ts.get_data(code = "513100", 
-        start_date = "20160101", 
-        end_date = "20211231",
-        refresh = True)
-    bk_data = ts.get_data(code = "000300", 
-        start_date = "20160101", 
-        end_date = "20211231",
-        refresh = True)
     backtest = ts.BackTest(
         strategy = MyStrategy, 
-        code = "513100", 
+        codes = ["513100"], 
+        bk_code = "000300",
         start_date = "20160101", 
         end_date = "20211231", 
-        stock_data = data, 
-        bk_data = bk_data,
         rf = 0.03, 
         start_cash = 10000000,
         stamp_duty=0.005, 
@@ -87,7 +95,7 @@ def do_opt():
     ts.init_display()
     map = range(2, 20)
     opt = ts.OptStrategy(
-        code = "513100", 
+        codes = ["513100"], 
         bk_code = "000300", 
         strategy = MyStrategy, 
         start_date = "20160101", 
@@ -104,7 +112,7 @@ def do_opt():
 
 
 if __name__ == "__main__":
-    # back_test()
-    do_research()
+    back_test()
+    # do_research()
     # do_opt()
     

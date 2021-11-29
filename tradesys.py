@@ -125,8 +125,10 @@ class Strategy(bt.Strategy):
             self.log('毛收益 %0.2f, 扣佣后收益 % 0.2f, 佣金 %.2f, 市值 %.2f, 现金 %.2f'%(trade.pnl, trade.pnlcomm, trade.commission, self.broker.getvalue(), self.broker.getcash()))
                 
     def stop(self):
-        if self.position:
-            self.close()
+        for i, d in enumerate(self.datas):
+            pos = self.getposition(d).size
+            if pos != 0:
+                self.close()
             
             
 # 回测类
@@ -134,11 +136,10 @@ class BackTest():
     """
         A股股票策略回测类
         strategy   回测策略
-        code       回测股票代码
+        codes      回测股票代码列表
         start_date 回测开始日期
         end_date   回测结束日期
-        stock_data 股票数据
-        bk_data    基准数据
+        bk_code    基准股票代码
         rf         无风险收益率
         start_cash 初始资金
         stamp_duty 印花税率，单向征收
@@ -150,14 +151,15 @@ class BackTest():
         bdraw      是否作图
         **param   策略参数，用于调参
     """
-    def __init__(self, strategy, code, start_date, end_date, stock_data, bk_data, rf = 0.03, start_cash = 10000000, stamp_duty=0.005, commission=0.0001, adjust = "hfq", period = "daily", refresh = False, bprint = False, bdraw = False, **param):
+    def __init__(self, strategy, codes, start_date, end_date, bk_code = "000300", rf = 0.03, start_cash = 10000000, stamp_duty=0.005, commission=0.0001, adjust = "hfq", period = "daily", refresh = False, bprint = False, bdraw = False, **param):
         self._cerebro = bt.Cerebro()
         self._strategy = strategy
-        self._code = code
+        self._codes = codes
+        self._bk_code = bk_code
         self._start_date = start_date
         self._end_date = end_date
-        self._stock_data = stock_data
-        self._bk_data = bk_data
+        # self._stock_data = stock_data
+        # self._bk_data = bk_data
         self._rf = rf
         self._start_cash = start_cash
         self._comminfo = CNA_Commission(stamp_duty=0.005, commission=0.0001)
@@ -170,8 +172,13 @@ class BackTest():
         
     # 回测前准备
     def _before_test(self):
-        self._data = self._datatransform(self._stock_data, self._code)
-        self._cerebro.adddata(self._data)
+        for code in self._codes:
+            data = get_data(code = code, 
+        start_date = self._start_date, 
+        end_date = self._end_date,
+        refresh = self._refresh)
+            data = self._datatransform(data, code)
+            self._cerebro.adddata(data, name = code)
         self._cerebro.addstrategy(self._strategy, bprint = self._bprint, **self._param)
         self._cerebro.broker.setcash(self._start_cash)
         self._cerebro.broker.addcommissioninfo(self._comminfo)
@@ -211,18 +218,18 @@ class BackTest():
         self._before_test()
         self._add_analyzer()
         self._results = self._cerebro.run()
-        
         return self._get_results()
         
     # 获取回测结果
     def _get_results(self):
         # 计算基准策略收益率
+        self._bk_data = get_data(code = self._bk_code, start_date = self._start_date, end_date = self._end_date, refresh = self._refresh)
         bk_ret = self._bk_data.收盘.pct_change()
         bk_ret.fillna(0.0, inplace = True)
     
         if self._bdraw:
             self._cerebro.plot(style = "candlestick")
-            plt.savefig("./output/"+self._code+"_result.jpg")
+            plt.savefig("./output/"+"backtest_result.jpg")
     
         testresults = self._backtest_result(self._results, bk_ret, rf = self._rf)
         end_value = self._cerebro.broker.getvalue()
@@ -234,7 +241,7 @@ class BackTest():
         testresults["期末净值"] = end_value
         testresults["净收益"] = pnl
         testresults["收益/成本"] = pnl/testresults["交易成本"]
-        testresults["股票代码"] = self._code
+        testresults["股票代码"] = self._codes
         return testresults
         
     # 计算回测指标
@@ -329,7 +336,7 @@ class BackTest():
         
     # 回测报告
     def _make_report(self, returns, bk_ret, rf, filename = "report.jpg", title = "回测结果", prepare_returns = False):
-        filename = self._code + filename 
+        # filename = self._code + filename 
         quantstats.reports.html(returns = returns, benchmark = bk_ret, rf = rf, output='./output/stats.html', title=title, prepare_returns = prepare_returns)
         imgkit.from_file("./output/stats.html", "./output/" + filename, options = {"xvfb": ""})
         # 压缩图片文件
@@ -394,10 +401,6 @@ class Research():
         self._results = pd.DataFrame()
         n = len(self._codes)
         i = 0
-        bk_data = get_data(code = "000300", 
-        start_date = self._start_date, 
-        end_date = self._end_date,
-        refresh = True)
         print("回测整个市场……")
         for code in self._codes:
             i += 1
@@ -406,9 +409,9 @@ class Research():
                 start_date = self._start_date, 
                 end_date = self._end_date,
                 refresh = True)
-            if len(data) <= self._min_len:
+            if len(data) <= self._min_len or (data.收盘 < 0.0).sum() > 0:
                 continue
-            backtest = BackTest(strategy = self._strategy, code = code, start_date = self._start_date, end_date = self._end_date, stock_data = data, bk_data = bk_data, start_cash = self._start_cash, refresh = True, **self._params)
+            backtest = BackTest(strategy = self._strategy, codes = [code], start_date = self._start_date, end_date = self._end_date, start_cash = self._start_cash, refresh = True, **self._params)
             res = backtest.run()
             self._results = self._results.append(res, ignore_index = True)
         self._results.to_csv(result_path)
@@ -448,7 +451,7 @@ class Research():
 class OptStrategy():
     """
         策略优化类
-        code       股票代码
+        codes      股票代码列表
         bk_code    基准股票代码
         strategy   回测策略
         start_date 回测开始日期
@@ -463,8 +466,8 @@ class OptStrategy():
         bdraw      是否作图
         **params   要调优的参数范围
     """
-    def __init__(self, code, bk_code, strategy, start_date, end_date, min_len = 1, start_cash = 10000000, retest = False, refresh = False, bprint = False, bdraw = True, **params):
-        self._code = code
+    def __init__(self, codes, strategy, start_date, end_date, bk_code = "000300", min_len = 1, start_cash = 10000000, retest = False, refresh = False, bprint = False, bdraw = True, **params):
+        self._codes = codes
         self._bk_code = bk_code
         self._strategy = strategy
         self._start_date = start_date
@@ -476,14 +479,10 @@ class OptStrategy():
         self._bprint = bprint
         self._bdraw = bdraw
         self._params = params
-        
-    def _before_test(self):
-        self._data = get_data(code = self._code, start_date = self._start_date, end_date = self._end_date, refresh = self._refresh)
-        self._bk_data = get_data(code = self._bk_code, start_date = self._start_date, end_date = self._end_date, refresh = self._refresh)
+
                 
     # 运行回测
     def run(self):
-        self._before_test()
         self._results = pd.DataFrame()
         optparams = []
         # 遍历所有参数，初始化回测类，执行回测
@@ -491,11 +490,10 @@ class OptStrategy():
         for param in params:
             backtest = BackTest(
                 strategy = self._strategy, 
-                code = self._code, 
+                codes = self._codes, 
                 start_date = self._start_date, 
                 end_date = self._end_date, 
-                stock_data = self._data, 
-                bk_data = self._bk_data,
+                bk_code = self._bk_code,
                 start_cash = self._start_cash,
                 refresh = self._refresh, 
                 bprint = self._bprint, 
